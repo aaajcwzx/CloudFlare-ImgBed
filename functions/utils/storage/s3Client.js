@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3';
+import { isQiniuChannel } from './qiniuConfig.js';
 
 export function normalizeS3UserAgent(value) {
     if (value == null) return '';
@@ -19,6 +20,10 @@ export function createS3Client(channel, options = {}) {
             secretAccessKey: channel.secretAccessKey,
         },
         forcePathStyle: channel.pathStyle || false,
+        ...(isQiniuChannel(channel) ? {
+            requestChecksumCalculation: 'WHEN_REQUIRED',
+            responseChecksumValidation: 'WHEN_REQUIRED',
+        } : {}),
         ...options,
     });
 

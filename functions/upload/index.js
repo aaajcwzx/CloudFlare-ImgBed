@@ -1,4 +1,5 @@
 import { createS3Client } from '../utils/storage/s3Client.js';
+import { prepareQiniuUpload } from '../utils/storage/qiniuConfig.js';
 import { userAuthCheck, UnauthorizedResponse } from "../utils/auth/userAuth";
 import { fetchUploadConfig, fetchSecurityConfig, fetchPageConfig } from "../utils/sysConfig";
 import {
@@ -37,6 +38,9 @@ export async function onRequest(context) {  // Contents of context object
     if (!await userAuthCheck(env, url, request, requiredPermission)) {
         return UnauthorizedResponse('Unauthorized');
     }
+
+    const qiniuError = prepareQiniuUpload(context);
+    if (qiniuError) return createResponse(qiniuError, { status: 400 });
 
     // 获得上传IP
     const uploadIp = getUploadIp(request);

@@ -3,6 +3,7 @@ import { normalizeUploadFormatConfig, validateUploadFormatConfig } from '../../.
 import { getDatabase } from '../../../utils/databaseAdapter.js';
 import { normalizeWebDAVHeaders } from '../../../utils/storage/webdavAPI.js';
 import { normalizeS3UserAgent } from '../../../utils/storage/s3Client.js';
+import { normalizeQiniuChannel } from '../../../utils/storage/qiniuConfig.js';
 
 export async function onRequest(context) {
     // 上传设置相关，GET方法读取设置，POST方法保存设置
@@ -46,6 +47,7 @@ export async function onRequest(context) {
 
         try {
             for (const channel of settings.s3?.channels || []) {
+                if (channel.provider === 'qiniu') Object.assign(channel, normalizeQiniuChannel(channel));
                 channel.userAgent = normalizeS3UserAgent(channel.userAgent);
             }
         } catch (error) {
@@ -176,6 +178,7 @@ export async function getUploadConfig(db, env) {
         })
     }
     for (const s of settingsKV.s3?.channels || []) {
+        if (s.name === 'Qiniu_env' && s.savePath === 'environment variable') continue;
         // 如果savePath是environment variable，修改可变参数
         if (s.savePath === 'environment variable') {
             // 如果环境变量未删除，进行覆盖操作
@@ -200,6 +203,32 @@ export async function getUploadConfig(db, env) {
         channels: [],
     }
     s3.loadBalance = s3LoadBalance
+
+    if (env.QINIU_ACCESS_KEY) {
+        try {
+            const channel = normalizeQiniuChannel({
+                id: s3Channels.length + 1,
+                name: 'Qiniu_env',
+                savePath: 'environment variable',
+                accessKeyId: env.QINIU_ACCESS_KEY,
+                secretAccessKey: env.QINIU_SECRET_KEY,
+                region: env.QINIU_REGION || 'cn-east-1',
+                bucketName: env.QINIU_BUCKET_NAME,
+                cdnDomain: env.QINIU_CDN_DOMAIN || '',
+                enabled: true,
+                fixed: true,
+            });
+            const stored = settingsKV.s3?.channels?.find(item => item.name === 'Qiniu_env' && item.savePath === 'environment variable');
+            if (stored) {
+                channel.enabled = stored.enabled;
+                channel.quota = stored.quota;
+                channel.cdnDomain = stored.cdnDomain ?? channel.cdnDomain;
+            }
+            s3Channels.push(channel);
+        } catch {
+            console.warn('Invalid Qiniu environment configuration; Qiniu uploads are disabled.');
+        }
+    }
 
 
     // =====================读取 Discord 渠道配置=====================
