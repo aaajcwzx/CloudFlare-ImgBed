@@ -3,6 +3,7 @@ import { File } from 'node:buffer';
 import { loadFunction, memoryDatabase } from './helpers/loadFunction.js';
 import * as responses from '../functions/utils/apiResponse.js';
 import { png } from './helpers/files.js';
+import { prepareQiniuUpload } from '../functions/utils/storage/qiniuConfig.js';
 
 describe('upload', () => {
     let db, tools, mocks, storage, waits;
@@ -22,7 +23,7 @@ describe('upload', () => {
             fetchUploadConfig: async () => ({
                 cfr2: { channels: [{ name: 'mock' }] },
                 telegram: { channels: [{ name: 'mock', botToken: 'mock', chatId: 'mock' }], loadBalance: { enabled: false } },
-                s3: { channels: [{ name: 'mock', bucketName: 'mock' }], loadBalance: { enabled: false } },
+                s3: { channels: [{ name: 'mock', bucketName: 'mock' }, { name: 'qiniu', provider: 'qiniu', bucketName: 'qiniu-bucket' }], loadBalance: { enabled: false } },
                 webdav: { channels: [{ name: 'mock', baseUrl: 'https://storage.invalid' }] },
                 huggingface: { channels: [{ name: 'mock', token: 'mock', repo: 'mock/repo', isPrivate: true }] },
             }),
@@ -83,6 +84,40 @@ describe('upload', () => {
         assert.equal(response.headers.get('Cache-Control'), 'no-store');
         assert.equal(db.records.size, 0);
         assert.deepEqual(storage, {});
+    });
+
+    it('uploads the Qiniu API alias to its own S3 channel and keeps compatible metadata', async () => {
+        const selected = [];
+        const route = await loadFunction('functions/upload/index.js', { ...mocks, createS3Client: channel => {
+            selected.push(channel);
+            return { async send(command) { assert.equal(command.input.Bucket, 'qiniu-bucket'); } };
+        } });
+        const form = new FormData();
+        form.set('file', new File([png()], 'photo.png', { type: 'image/png' }));
+        const response = await route.onRequest(context('https://test/upload?uploadChannel=qiniu&channelName=qiniu&returnFormat=full&responseFormat=object', form));
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.ok(body.src.startsWith('https://test/file/'));
+        const record = await db.getWithMetadata(body.src.split('/file/')[1]);
+        assert.equal(record.metadata.Channel, 'S3');
+        assert.equal(record.metadata.ChannelName, 'qiniu');
+        assert.equal(selected.length, 1);
+    });
+
+    it('rejects a missing Qiniu channel and does not retry another provider after Qiniu fails', async () => {
+        const selected = [];
+        const route = await loadFunction('functions/upload/index.js', { ...mocks, createS3Client: channel => {
+            selected.push(channel.name);
+            return { async send() { throw new Error('provider unavailable'); } };
+        } });
+        const missing = await route.onRequest(context('https://test/upload?uploadChannel=qiniu&channelName=missing'));
+        assert.equal(missing.status, 400);
+        assert.deepEqual(selected, []);
+        const form = new FormData(); form.set('file', new File([png()], 'photo.png'));
+        const failed = await route.onRequest(context('https://test/upload?uploadChannel=qiniu', form));
+        assert.equal(failed.status, 500);
+        assert.deepEqual(selected, ['qiniu']);
+        assert.equal(db.records.size, 0);
     });
 
     it('blocks forbidden upload IPs before parsing or storing a file', async () => {
@@ -293,6 +328,7 @@ describe('upload', () => {
         for (const [channel, fileType, expected] of [
             ['cfr2', 'application/octet-stream; charset=binary', 'image/png'],
             ['s3', 'application/octet-stream; charset=binary', 'image/png'],
+            ['qiniu', 'application/octet-stream; charset=binary', 'image/png'],
             ['cfr2', 'application/pdf', 'application/pdf'],
             ['s3', 'application/pdf', 'application/pdf'],
         ]) {
@@ -311,6 +347,7 @@ describe('upload', () => {
                 form.set('totalChunks', '1');
                 const uploadContext = context(`https://test/upload?uploadChannel=${channel}${responseFormat === 'object' ? '&responseFormat=object' : ''}`, form);
                 uploadContext.uploadConfig = await mocks.fetchUploadConfig();
+                assert.equal(prepareQiniuUpload(uploadContext), null);
                 const initialized = await chunk.initializeChunkedUpload(uploadContext);
                 assert.equal(initialized.status, 200);
                 const initBody = await initialized.json();

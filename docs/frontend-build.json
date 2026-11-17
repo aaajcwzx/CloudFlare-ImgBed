@@ -1,0 +1,10 @@
+{
+  "repository": "aaajcwzx/Sanyue-ImgHub",
+  "sourceCommit": "38c27087b8b1ee2f3e47eb01144cac17ea54487a",
+  "sourceBranch": "feat/qiniu-s3-preset",
+  "buildCommand": "npm ci && npm run build",
+  "nodeVersion": "22.23.5",
+  "webpackHash": "a3e49e0c9fa7ae64",
+  "appEntry": "/js/app.b19ec764.js",
+  "builtAt": "2026-11-17T10:57:07.252Z"
+}

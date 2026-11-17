@@ -49,7 +49,8 @@ export async function onRequest(context) {
             })),
             s3: uploadConfig.s3.channels.map(ch => ({
                 name: ch.name,
-                type: 'S3'
+                type: 'S3',
+                ...(ch.provider ? { provider: ch.provider } : {})
             })),
             discord: uploadConfig.discord.channels.map(ch => ({
                 name: ch.name,
